@@ -1,0 +1,9 @@
+{
+    "mcpServers": {
+      "tc_mcp_iii": {
+        "command": "npx",
+        "args": ["tsx", "./src/index.ts"],
+        "cwd": "C:\\code\\MCP\\tc_mcp_III"
+      }
+    }
+  }
