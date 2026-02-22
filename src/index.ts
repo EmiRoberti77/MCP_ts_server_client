@@ -13,6 +13,7 @@ import type { Request, Response } from 'express';
 // import './prompts/todos/todosPrompts.js';
 import { registerAllTodoResources, registerSingleTodoResource } from './resources/todo/todoResources.js';
 import { registerCreateUserTool } from './tools/users/createUserTool.js';
+import { registerFetchUserTool } from './tools/users/fetchUsersTool.js';
 import { registerFetchPrompt } from './prompts/todos/todosPrompts.js';
 import { registerAllUsersResource } from './resources/users/usersResources.js';
 dotenv.config()
@@ -22,11 +23,12 @@ const port = parseInt(process.env.PORT ?? '3000', 10)
 
 function getServer(){
     const server = createMCPServer();
-    registerAllTodoResources(server);
-    registerSingleTodoResource(server)
     registerCreateUserTool(server);
-    registerFetchPrompt(server);
+    registerFetchUserTool(server);
     registerAllUsersResource(server);
+    registerAllTodoResources(server);
+    registerSingleTodoResource(server);
+    registerFetchPrompt(server);
     return server
 }
 

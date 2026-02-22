@@ -1,6 +1,6 @@
 # MCP Sample Agent Tutorial
 
-A Model Context Protocol (MCP) server that exposes tools and resources for creating, fetching, and reading users. This tutorial explains the project structure, how tools and resources are built, and how to integrate with Cursor.
+A Model Context Protocol (MCP) server that exposes tools, resources, and prompts for users and todos. Supports both **stdio** (local) and **Streamable HTTP** (cloud-ready) transports. This tutorial explains the project structure, how tools, resources, and prompts are built, and how to integrate with Cursor.
 
 ## Prerequisites
 
@@ -11,7 +11,7 @@ A Model Context Protocol (MCP) server that exposes tools and resources for creat
 
 ```bash
 npm install
-npm run dev          # Run the MCP server
+npm run dev          # Run the MCP server (Streamable HTTP on port 3000)
 npm run inspect      # Test in MCP Inspector
 ```
 
@@ -22,19 +22,26 @@ npm run inspect      # Test in MCP Inspector
 ```
 tc_mcp_III/
 ├── src/
-│   ├── index.ts              # Entry point: starts server + registers tools & resources
-│   ├── server.ts             # MCP server instance and capabilities
+│   ├── index.ts              # Entry point: Express + Streamable HTTP transport
+│   ├── server.ts             # MCP server factory (createMCPServer)
 │   ├── entities/
-│   │   └── user.entity.ts    # Zod schemas and types for users
+│   │   ├── user.entity.ts    # Zod schemas and types for users
+│   │   └── todo.entity.ts    # Zod schemas and types for todos
 │   ├── users/
 │   │   └── userHandler.ts    # Business logic: create, fetch users
 │   ├── tools/
 │   │   └── users/
 │   │       ├── createUserTool.ts   # MCP tool: create-user
 │   │       └── fetchUsersTool.ts   # MCP tool: fetch-users
-│   └── resources/
-│       └── users/
-│           └── usersResources.ts   # MCP resource: users (read-only)
+│   ├── resources/
+│   │   ├── users/
+│   │   │   └── usersResources.ts   # MCP resource: users (read-only)
+│   │   └── todo/
+│   │       ├── todoResources.ts   # MCP resources: todos, single-todo (template)
+│   │       └── todoHandler.ts     # Fetches todos from dummyjson.com
+│   └── prompts/
+│       └── todos/
+│           └── todosPrompts.ts    # MCP prompt: fetch-todo-item
 ├── users.json                # JSON "database" for users
 ├── .cursor/
 │   └── mcp.json              # Cursor MCP configuration
@@ -46,278 +53,196 @@ tc_mcp_III/
 
 | Layer | Purpose |
 |-------|---------|
-| **index.ts** | Bootstraps the server, imports tool and resource modules, connects transport |
-| **server.ts** | Creates `McpServer` with name, version, and capabilities |
+| **index.ts** | Bootstraps Express, creates server per request, connects Streamable HTTP transport |
+| **server.ts** | Factory `createMCPServer()` for stateless per-request servers |
 | **entities/** | Shared schemas (Zod) and TypeScript types |
 | **users/** | Domain logic (CRUD) independent of MCP |
-| **tools/** | MCP tool definitions: wire schema + handler to the server |
+| **tools/** | MCP tool definitions: wire schema + handler via `registerXxx(server)` |
 | **resources/** | MCP resource definitions: read-only data exposed via URI |
+| **prompts/** | MCP prompt templates for AI interactions |
 
 ---
 
-## How the Code is Structured
+## Transport: Streamable HTTP
 
-### 1. Entry Point (`src/index.ts`)
+The server uses **Streamable HTTP** transport, making it suitable for cloud deployment (e.g., GCP Cloud Run). Each HTTP request gets a fresh MCP server instance (stateless pattern).
 
-The entry point does four things:
+### How It Works
 
-1. Imports the server
-2. **Imports tool modules** (critical: tools register on import)
-3. **Imports resource modules** (resources register on import)
-4. Connects the server to stdio transport
+1. Express app listens on `PORT` (default 3000)
+2. All MCP traffic goes to the `/mcp` endpoint
+3. For each request: create server → register tools/resources/prompts → connect transport → handle → close
 
 ```typescript
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { server } from './server.js'
-
-// Import tools so they register with the server
-import './tools/users/createUserTool.js';
-import './tools/users/fetchUsersTool.js';
-
-// Import resources so they register with the server
-import './resources/users/usersResources.js';
-
-async function main() {
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
+// src/index.ts (simplified)
+function getServer() {
+    const server = createMCPServer();
+    registerCreateUserTool(server);
+    registerFetchUserTool(server);
+    registerAllUsersResource(server);
+    registerAllTodoResources(server);
+    registerSingleTodoResource(server);
+    registerFetchPrompt(server);
+    return server;
 }
 
-main();
+app.all('/mcp', async (req, res) => {
+    const server = getServer();
+    const transport = new StreamableHTTPServerTransport();
+    await server.connect(transport);
+    await transport.handleRequest(req, res, req.body ?? {});
+    res.on('close', () => {
+        server.close();
+        transport.close();
+    });
+});
 ```
-
-**Important:** Tool and resource files must be imported before `connect()`. They call `server.registerTool()` and `server.registerResource()` at load time.
 
 ---
 
-### 2. Server (`src/server.ts`)
+## Server Factory (`src/server.ts`)
 
-The server is created with metadata and capabilities:
+The server is created per request to support stateless HTTP:
 
 ```typescript
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-export const server = new McpServer(
-    { name: 'emi_mcp_server', version: '1.0.0' },
-    {
-        capabilities: {
-            tools: {},
-            prompts: {},
-            resources: {},
-            tasks: {}
+export function createMCPServer() {
+    return new McpServer(
+        { name: 'emi_mcp_server', version: '1.0.0' },
+        {
+            capabilities: {
+                tools: {},
+                prompts: {},
+                resources: {},
+                tasks: {}
+            }
         }
-    }
-);
+    );
+}
 ```
-
-- **First argument:** Server info (name, version)
-- **Second argument:** Options including `capabilities` (what the server supports)
 
 ---
 
-### 3. Entities (`src/entities/user.entity.ts`)
+## Registration Pattern
 
-Zod schemas define and validate tool input:
+Tools, resources, and prompts use **registration functions** that accept a server instance. This allows a new server to be created per request and configured before use.
+
+**Example: fetch-users tool**
 
 ```typescript
-import { z } from 'zod';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
-export const userSchema = z.object({
-    id: z.number().optional(),
-    name: z.string(),
-    email: z.string(),
-    phone: z.string(),
-    address: z.string().optional()
-});
-
-export type User = z.infer<typeof userSchema>;
-
-export const fetchUserSchema = z.object({
-    name: z.string(),
-    email: z.string(),
-    phone: z.string()
-});
-
-export type UserFetchRequest = z.infer<typeof fetchUserSchema>;
+export function registerFetchUserTool(server: McpServer) {
+    server.registerTool(
+        'fetch-users',
+        { title: '...', description: '...', inputSchema: fetchUserSchema },
+        async (userSearch) => ({ content: [{ type: 'text', text: JSON.stringify(foundUsers) }] })
+    );
+}
 ```
-
-- Schemas are reused for validation and TypeScript types
-- `userSchema` → create-user tool
-- `fetchUserSchema` → fetch-users tool
 
 ---
 
-### 4. User Handler (`src/users/userHandler.ts`)
+## Resources
 
-Business logic lives here, separate from MCP:
+### Static Resources
 
-- `createUser(user)` – adds a user to `users.json`
-- `fetchUses(params)` – filters users by name, email, or phone
+| Resource | URI | Description |
+|----------|-----|-------------|
+| `users` | `users://all` | All users from `users.json` |
+| `todos` | `todos://all` | All todos from dummyjson.com API |
 
-This keeps MCP tools thin: they validate input, call the handler, and format the response.
+### Resource Templates
 
----
+| Resource | URI Template | Description |
+|----------|--------------|-------------|
+| `single-todo` | `todos://{id}/single` | Fetch a single todo by ID |
 
-### 5. Tool Structure (`src/tools/users/*.ts`)
+Resource templates appear in the **Templates** section of the MCP Inspector. To read a single todo, request e.g. `todos://5/single`.
 
-Each tool file:
-
-1. Imports the server, schema, and handler
-2. Calls `server.registerTool(name, config, handler)`
-
-**Example: create-user**
-
-```typescript
-import { userSchema } from '../../entities/user.entity.js';
-import { server } from '../../server.js';
-import { createUser } from '../../users/userHandler.js';
-
-server.registerTool(
-    'create-user',
-    {
-        title: 'create-user-tool',
-        description: 'create a new user in the database',
-        inputSchema: userSchema,
-        annotations: {
-            title: 'Create a new user',
-            readOnlyHint: false,
-            destructiveHint: false,
-            idempotentHint: false,
-        }
-    },
-    async (user) => {
-        try {
-            const result = await createUser(user);
-            return {
-                content: [{ type: 'text', text: result.msg ?? 'User created' }]
-            };
-        } catch {
-            return {
-                content: [{ type: 'text', text: 'Error: failed to save user' }]
-            };
-        }
-    }
-);
-```
-
-**Tool config fields:**
-
-| Field | Purpose |
-|-------|---------|
-| `title` | Human-readable name |
-| `description` | Shown to the AI; should explain when to use the tool |
-| `inputSchema` | Zod schema for validation |
-| `annotations` | Hints (readOnly, destructive, idempotent) |
-
-**Handler return format:** MCP expects `{ content: [{ type: 'text', text: string }] }`.
+**Return format:** `{ contents: [{ uri: string, text: string }] }`
 
 ---
 
-### 6. Resource Structure (`src/resources/users/*.ts`)
+## Prompts
 
-Resources expose read-only data via URIs. Each resource file:
+Prompts are reusable templates for AI interactions. In Cursor, type `/` in the chat to see available prompts.
 
-1. Imports the server
-2. Calls `server.registerResource(name, uri, config, readCallback)`
+| Prompt | Args | Description |
+|--------|------|-------------|
+| `fetch-todo-item` | `id` (number) | Generates a prompt to fetch a todo by ID |
 
-**Example: users resource**
-
-```typescript
-import path from 'node:path';
-import { server } from '../../server.js';
-import { pathToFileURL } from 'node:url';
-
-server.registerResource(
-    'users',
-    'users://all',
-    {
-        description: 'get all users data from the JSON file',
-        title: 'Users',
-        mimeType: 'application/json'
-    },
-    async (uri) => {
-        const root = process.cwd();
-        const json_path = path.join(root, 'users.json');
-        const json_url = pathToFileURL(json_path).href;
-        const json_users = await import(json_url, { with: { type: 'json' } });
-        const user_json = json_users.default;
-        return {
-            contents: [{ uri: uri.href, text: JSON.stringify(user_json) }]
-        };
-    }
-);
-```
-
-**Resource config fields:**
-
-| Field | Purpose |
-|-------|---------|
-| `name` | Display name in resource list |
-| `uri` | URI that identifies the resource (e.g. `users://all`) |
-| `description` | Shown to clients |
-| `title` | Human-readable title |
-| `mimeType` | Content type (e.g. `application/json`) |
-
-**Read callback return format:** MCP expects `{ contents: [{ uri: string, text: string }] }` for text content. Use `text` for string data or `blob` for base64-encoded binary.
-
-**URI convention:** Use a custom scheme (e.g. `users://`) and path (e.g. `all`) to identify resources. Clients request data by URI.
+**Example:** `/fetch-todo-item` with `id: 1` → *"go and get a todo item based on 1"*
 
 ---
 
 ## Adding the Server to Cursor
 
-### 1. Project-level config (`.cursor/mcp.json`)
+### Option A: Local (stdio via mcp-remote)
 
-Create `.cursor/mcp.json` in your project root:
+If running the HTTP server locally, use `mcp-remote` to proxy:
 
 ```json
 {
   "mcpServers": {
     "tc_mcp_iii": {
       "command": "npx",
-      "args": ["tsx", "./src/index.ts"],
+      "args": ["-y", "mcp-remote", "http://localhost:3000/mcp"],
       "cwd": "C:\\code\\MCP\\tc_mcp_III"
     }
   }
 }
 ```
 
-**Notes:**
+### Option B: Direct URL (if Cursor supports it)
 
-- Use `npx tsx` (or `node` with built output) instead of `npm run dev` to avoid npm output on stdout
-- `cwd` must be the project directory (use an absolute path)
-- On Windows, escape backslashes: `C:\\code\\MCP\\tc_mcp_III`
+```json
+{
+  "mcpServers": {
+    "tc_mcp_iii": {
+      "url": "http://localhost:3000/mcp"
+    }
+  }
+}
+```
 
-### 2. Enable in Cursor
+### Option C: Cloud deployment
 
-1. Open **Cursor Settings** (Ctrl+,)
-2. Search for **MCP**
-3. Ensure your server is listed and **enabled**
-4. Restart Cursor if you changed config
+For a server deployed on Cloud Run or similar:
 
-### 3. Use in Chat
-
-In Cursor Chat or Composer, ask the AI to use your tools and resources, e.g.:
-
-- *"Create a user named John with email john@example.com and phone +1234567890"*
-- *"Fetch users with email emi@emi.com"*
-- *"Read the users resource"* or *"What's in users://all?"*
+```json
+{
+  "mcpServers": {
+    "tc_mcp_iii": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://YOUR-SERVICE.run.app/mcp"]
+    }
+  }
+}
+```
 
 ---
 
 ## Testing with MCP Inspector
 
-```bash
-npm run inspect
-```
+### Connect via URL (Streamable HTTP)
 
-This opens the MCP Inspector in your browser. You can:
+1. **Terminal 1** – Start the server:
+   ```bash
+   npm run dev
+   ```
 
-1. Connect to the server
-2. Call tools manually with JSON input
-3. Read resources by URI (e.g. `users://all`)
-4. Inspect requests and responses
+2. **Terminal 2** – Launch Inspector and connect to URL:
+   ```bash
+   npx @modelcontextprotocol/inspector --connect http://localhost:3000/mcp
+   ```
 
-**Tip:** Run `npx tsx ./src/index.ts` directly (not via `npm run dev`) so no extra output goes to stdout.
+3. In the Inspector UI, select **streamable-http** as the transport and enter `http://localhost:3000/mcp` if prompted.
+
+### Connect via stdio (legacy)
+
+The `npm run inspect` script spawns the server as a child process. For Streamable HTTP testing, use the two-terminal approach above.
 
 ---
 
@@ -332,7 +257,34 @@ This opens the MCP Inspector in your browser. You can:
 
 | Resource | URI | Description |
 |----------|-----|-------------|
-| `users` | `users://all` | Read-only: all users from `users.json` |
+| `users` | `users://all` | All users from `users.json` |
+| `todos` | `todos://all` | All todos from dummyjson.com |
+| `single-todo` | `todos://{id}/single` | Single todo by ID (template) |
+
+## Available Prompts
+
+| Prompt | Args | Description |
+|--------|------|-------------|
+| `fetch-todo-item` | id (number) | Generate a prompt to fetch a todo by ID |
+
+---
+
+## Cloud Deployment (GCP Cloud Run)
+
+The server is ready for cloud deployment:
+
+1. **Build & deploy:**
+   ```bash
+   gcloud run deploy tc-mcp-server --source .
+   ```
+
+2. **Environment:** Set `PORT` (Cloud Run uses 8080 by default).
+
+3. **Client config:** Point Cursor or Inspector to `https://YOUR-SERVICE.run.app/mcp`.
+
+4. **Auth:** Use `gcloud run services proxy` for local clients, or OIDC/IAM for production.
+
+See [Host MCP servers on Cloud Run](https://cloud.google.com/run/docs/host-mcp-servers) for details.
 
 ---
 
@@ -340,12 +292,12 @@ This opens the MCP Inspector in your browser. You can:
 
 | Issue | Solution |
 |-------|----------|
-| Tools not showing in Inspector | Ensure tool files are imported in `index.ts` before `connect()` |
-| Resources not showing | Ensure resource files are imported in `index.ts` before `connect()` |
-| Resource returns "contents" error | Use `contents` (plural) and `text` (not `content`/`type`) in the callback return |
-| "Unexpected token '>'" / JSON parse error | Use `npx tsx ./src/index.ts` instead of `npm run dev` |
-| Cursor not connecting | Check `.cursor/mcp.json`, enable server in Settings, restart Cursor |
-| `process` not found | Add `"types": ["node"]` to `tsconfig.json` |
+| Tools not showing | Ensure all `registerXxx(server)` are called in `getServer()` |
+| "Already connected to a transport" | Use per-request server pattern: create server in handler, call `server.close()` on response close |
+| Inspector URL not connecting | Start server with `npm run dev` first, then `--connect http://localhost:3000/mcp` |
+| Prompts not in Cursor | Type `/` in chat; ensure server is configured and connected |
+| Single-todo not in Resources list | It's a template—check the **Templates** section, or read `todos://1/single` directly |
+| `Transport` type error | Use `transport as Transport` with `exactOptionalPropertyTypes` |
 
 ---
 
@@ -353,4 +305,5 @@ This opens the MCP Inspector in your browser. You can:
 
 - [Model Context Protocol](https://modelcontextprotocol.io/)
 - [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)
+- [Host MCP servers on Cloud Run](https://cloud.google.com/run/docs/host-mcp-servers)
 - [Cursor MCP Docs](https://docs.cursor.com/guides/tutorials/building-mcp-server)
