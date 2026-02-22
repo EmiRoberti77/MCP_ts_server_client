@@ -1,5 +1,13 @@
 import { z } from 'zod';
 
+const getAllUsersResponseSchema = z.object({
+    success: z.boolean(),
+    todos: z.array(z.any()).optional(),  // or z.array(todoSchema) if you have it
+    err: z.string().optional(),
+});
+
+export type GetAllUsersResponse = z.infer<typeof getAllUsersResponseSchema>;
+
 export const userSchema = z.object({
     id:z.number().optional(),
     name:z.string(),
