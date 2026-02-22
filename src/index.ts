@@ -4,6 +4,7 @@ import './tools/users/createUserTool.js';
 import './tools/users/fetchUsersTool.js';
 import './resources/users/usersResources.js';
 import './resources/todo/todoResources.js';
+import './prompts/todos/todosPrompts.js';
 
 async function main(){
     const transport = new StdioServerTransport();
