@@ -1,60 +1,46 @@
-import axios from 'axios';
-import { z } from 'zod';
-import type { Todo } from '../../entities/todo.entity.js';
-import type { GetAllUsersResponse } from '../../entities/user.entity.js';
-
-const todoEndPoint = 'https://dummyjson.com/todos'
-
-export class TodoHandler{
-    endpoint:string | undefined = undefined;
-    constructor(endpoint:string){
-        this.endpoint = endpoint
-    }
-
-    async getTodoById(id:number):Promise<Todo | undefined>{
-        const todoResponse = await axios.get<{todo:Todo}>(
-            `${this.endpoint}/${id}`,
-            {
-                headers:{
-                    "Content-Type":"application/json"
+import { ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { server } from '../../server.js'
+import { TodoHandler } from './todoHandler.js'
+const todoHandler = new TodoHandler();
+server.registerResource(
+    'todos',
+    'todos://all',
+    {
+        description:'get a list of all the todos that have been saved',
+        title: 'Todos',
+        mimeType:'application/json'
+    },
+    async uri => {
+        const todosResponse = await todoHandler.GetAllUsers()
+        console.log(todosResponse)
+        return {
+            contents:[
+                {
+                    uri:uri.href,
+                    text: JSON.stringify(todosResponse)
                 }
-            }
-        )
-        return todoResponse.data.todo ?? undefined;
-    }
-
-    async GetAllUsers():Promise<GetAllUsersResponse>{
-        try {
-            const response = await axios.get<{todos: Todo[]}>(todoEndPoint, {
-                headers:{
-                    "Content-Type":'application/json'
-                }
-            });
-    
-            if(response.data){
-                const todoResponse:GetAllUsersResponse = {
-                    success:true,
-                    todos:response.data.todos
-                };
-
-                return todoResponse;
-            } else {
-                const todoResponse:GetAllUsersResponse = {
-                    success:false,
-                    todos:[],
-                    err:'No todos found'
-                }
-
-                return todoResponse;
-            }
-        } catch(err:any) {
-            const todoResponse:GetAllUsersResponse = {
-                success:false,
-                todos:[],
-                err:err.message
-            }
-
-            return todoResponse;
+            ]
         }
     }
-}
+)
+
+server.registerResource(
+    'single-todo',
+    new ResourceTemplate('todos://{id}/single', {list:undefined}),
+    {
+        title:'single-todo',
+        description:'get the todo item by id',
+        mimeType:'application/json'
+    },
+    async ( uri, {id}) => {
+        const singleTodo = await todoHandler.getTodoById(parseInt(id as string))
+        return {
+            contents:[
+                {
+                    uri:uri.href,
+                    text:JSON.stringify(singleTodo ?? {})
+                }
+            ]
+        }
+    }
+)

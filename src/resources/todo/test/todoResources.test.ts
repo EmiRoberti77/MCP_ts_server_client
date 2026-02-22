@@ -1,5 +1,5 @@
 import {describe, it, expect, vi, beforeEach} from 'vitest';
-import {TodoHandler} from '../todoResources.js'
+import {TodoHandler} from '../todoHandler.js'
 import axios from 'axios';
 import type { Todo } from '../../../entities/todo.entity.js';
 import type { GetAllUsersResponse } from '../../../entities/user.entity.js';
