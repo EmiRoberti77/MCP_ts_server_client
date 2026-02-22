@@ -11,6 +11,18 @@ export class TodoHandler{
         this.endpoint = endpoint
     }
 
+    async getTodoById(id:number):Promise<Todo | undefined>{
+        const todoResponse = await axios.get<{todo:Todo}>(
+            `${this.endpoint}/${id}`,
+            {
+                headers:{
+                    "Content-Type":"application/json"
+                }
+            }
+        )
+        return todoResponse.data.todo ?? undefined;
+    }
+
     async GetAllUsers():Promise<GetAllUsersResponse>{
         try {
             const response = await axios.get<{todos: Todo[]}>(todoEndPoint, {

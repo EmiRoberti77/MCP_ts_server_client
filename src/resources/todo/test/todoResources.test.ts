@@ -12,11 +12,18 @@ describe('todoHandler', ()=>{
         handler = new TodoHandler(endpoint)
     })
 
-    describe('getallUsers', ()=> { 
+    describe('getallTodos', ()=> { 
         it('returns success with todos in the api call', async ()=>{
            const todosResponse: GetAllUsersResponse = await handler.GetAllUsers();
            expect(todosResponse.success).toBe(true);
            expect(todosResponse.todos!.length ?? 0).toBeGreaterThan(0);
+        })
+    })
+
+    describe('getTodo by id', ()=>{
+        it('return a single todo task', async () => {
+            const todoResponse:Todo | undefined = await handler.getTodoById(1);
+            expect(todoResponse).toBeDefined()
         })
     })
 })
