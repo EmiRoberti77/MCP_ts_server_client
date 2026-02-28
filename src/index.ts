@@ -13,6 +13,7 @@ import { registerFetchUserTool } from './tools/users/fetchUsersTool.js';
 import { registerFetchTodoPrompt } from './prompts/todos/todosPrompts.js';
 import { registerAllUsersResource } from './resources/users/usersResources.js';
 import { registerFetchUserPrompt } from './prompts/users/usersPrompts.js';
+import { registerUserSampling } from './sampling/user/userSampling.js';
 
 const app = createMcpExpressApp({host:'0.0.0.0'})
 const port = parseInt(process.env.PORT ?? '3000', 10)
@@ -26,6 +27,7 @@ function getServer(){
     registerSingleTodoResource(server);
     registerFetchTodoPrompt(server);
     registerFetchUserPrompt(server);
+    registerUserSampling(server);
     return server
 }
 
