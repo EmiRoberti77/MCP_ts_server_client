@@ -1,7 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-export function registerFetchPrompt(server:McpServer){
+export function registerFetchTodoPrompt(server:McpServer){
     server.registerPrompt(
         'fetch-todo-item',
         {

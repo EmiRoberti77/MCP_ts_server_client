@@ -5,18 +5,14 @@ import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import {createMCPServer} from './server.js'
 import dotenv from 'dotenv';
+dotenv.config()
 import type { Request, Response } from 'express';
-// import './tools/users/createUserTool.js';
-// import './tools/users/fetchUsersTool.js';
-// import './resources/users/usersResources.js';
-// import './resources/todo/todoResources.js';
-// import './prompts/todos/todosPrompts.js';
 import { registerAllTodoResources, registerSingleTodoResource } from './resources/todo/todoResources.js';
 import { registerCreateUserTool } from './tools/users/createUserTool.js';
 import { registerFetchUserTool } from './tools/users/fetchUsersTool.js';
-import { registerFetchPrompt } from './prompts/todos/todosPrompts.js';
+import { registerFetchTodoPrompt } from './prompts/todos/todosPrompts.js';
 import { registerAllUsersResource } from './resources/users/usersResources.js';
-dotenv.config()
+import { registerFetchUserPrompt } from './prompts/users/usersPrompts.js';
 
 const app = createMcpExpressApp({host:'0.0.0.0'})
 const port = parseInt(process.env.PORT ?? '3000', 10)
@@ -28,7 +24,8 @@ function getServer(){
     registerAllUsersResource(server);
     registerAllTodoResources(server);
     registerSingleTodoResource(server);
-    registerFetchPrompt(server);
+    registerFetchTodoPrompt(server);
+    registerFetchUserPrompt(server);
     return server
 }
 
